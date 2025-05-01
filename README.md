@@ -25,6 +25,10 @@ Generate an API key (https://www.coinbase.com/settings/api) and give it permissi
 |**TRADING_PAIR**  | (optional) The trading pair to use for DCA |
 |**ORDER_SIZE**  | (optional) The amount for DCA |
 |**CRON_EXPRESSION**  | (optional) To run on a [Cron Schedule](https://crontab.guru/) |
+|**NTFY_SERVER**  | (optional) ntfy Server (without trailing /) |
+|**NTFY_TOPIC**  | (optional) ntfy Topic |
+|**NTFY_USER**  | (optional) ntfy User in case you have access control in place |
+|**NTFY_PWD**  | (optional) ntfy Password in case you have access control in place |
 
 ## Contributing
 

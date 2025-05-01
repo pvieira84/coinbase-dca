@@ -10,6 +10,8 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 import secrets
 from enum import Enum
+import requests
+from requests.auth import HTTPBasicAuth
 
 request_host = os.environ.get("COINBASE_HOST", "api.coinbase.com")
 key_name = os.environ.get("COINBASE_KEY_NAME")
@@ -62,15 +64,15 @@ def coinbase_request(method, path, body):
 
     # Check for Unauthorized status code (401)
     if res.status == 401:
-        print("Error: Unauthorized. Please check your API key and secret.")
+        log("Error: Unauthorized. Please check your API key and secret.")
         return None
 
     try:
         response_data = json.loads(data.decode("utf-8"))
-        print(json.dumps(response_data, indent=2))
+        log(json.dumps(response_data, indent=2))
         return response_data
     except json.JSONDecodeError:
-        print("Error: Unable to decode JSON response. Raw response data:", data)
+        log(f"Error: Unable to decode JSON response. Raw response data: {data}")
         return None
 
 def placeLimitOrder(side, pair, size, limit_price):
@@ -89,7 +91,14 @@ def placeLimitOrder(side, pair, size, limit_price):
         }
     })
 
-    coinbase_request(method, path, payload)
+    response = coinbase_request(method, path, payload)
+
+    if response is None:
+        return None
+
+    return {"success": response.get('success', False),
+            "error_message": response.get('error_response',{}).get('message'),
+            "limit_price": response.get('order_configuration',{}).get('limit_limit_gtc',{}).get('limit_price')}
 
 def placeMarketOrder(side, pair, size):
     method = Method.POST.name
@@ -113,7 +122,7 @@ def getAllProductInfo():
     payload = ''
     response = coinbase_request(method, path, payload)
     for product in response['products']:
-        print(product['product_id'])
+        log(product['product_id'])
 
 
 def getProductInfo(pair):
@@ -134,12 +143,13 @@ def coinbase_dca():
     my_trading_pair = os.environ.get("TRADING_PAIR", "BTC-EUR")
     order_size = float(os.environ.get("ORDER_SIZE", "50"))
     factor = .999 if my_side == Side.BUY.name else 1.001
+    ntfy_message = ''
 
-    print(f'Getting product info for {my_trading_pair}')
+    log(f'Getting product info for {my_trading_pair}')
     product_info = getProductInfo(my_trading_pair)
     
     if product_info is None:
-        print("Error: Unable to fetch product information.")
+        log("Error: Unable to fetch product information.")
         return
 
     quote_currency_price_increment = abs(round(math.log(float(product_info['quote_increment']), 10)))
@@ -148,14 +158,56 @@ def coinbase_dca():
     my_limit_price = str(round(float(product_info['price']) * factor, quote_currency_price_increment))
     my_order_size = str(round(order_size / float(my_limit_price), base_currency_price_increment))
 
-    print(f'Placing a limit order for {my_trading_pair} with amount {order_size}')
-    placeLimitOrder(my_side, my_trading_pair, my_order_size, my_limit_price)
+    ntfy_message = log(f'Placing a limit order for {my_trading_pair} with amount €{order_size}',ntfy_message)
+    limit_order = placeLimitOrder(my_side, my_trading_pair, my_order_size, my_limit_price)
     #placeMarketOrder(my_side, my_trading_pair, str(order_size))
 
-    print(f'The spot price of {my_trading_pair} is €{product_info["price"]}')
+    ntfy_message = log(f'The spot price of {my_trading_pair} is €{product_info["price"]}',ntfy_message)
+    if limit_order is None:
+        ntfy_message = log('Error: Unable to fetch order information.',ntfy_message)
+    elif limit_order["success"] is False:
+        ntfy_message = log(f'Error: {limit_order["error_message"]}',ntfy_message)
+    else:
+        ntfy_message = log(f'Order successfuly placed for limit price of €{limit_order["limit_price"]}',ntfy_message)
+
+    push_ntfy(ntfy_message, 'Coinbase DCA', tags=['tada'] if limit_order["success"] else ['warning'])
+
+def log(message, ntfy_message=None):
+    print(message)
+    if ntfy_message != None:
+        return '\n'.join([ntfy_message,message]) if ntfy_message != '' else message
+
+def push_ntfy(message, title : str=None, priority=None, tags : list=None):
+    ntfy_server = os.environ.get("NTFY_SERVER")
+    ntfy_topic = os.environ.get("NTFY_TOPIC")
+    ntfy_user = os.environ.get("NTFY_USER")
+    ntfy_pwd = os.environ.get("NTFY_PWD")
+
+    if ntfy_server == None or ntfy_topic == None:
+        return
+
+    headers = {}
+    
+    if title:
+        headers["Title"] = title
+    if priority:
+        headers["Priority"] = priority
+    if tags:
+        headers["Tags"] = ",".join(tags)
+
+    response = requests.post(
+        f'{ntfy_server}/{ntfy_topic}',
+        auth= None if not ntfy_user else HTTPBasicAuth(ntfy_user, ntfy_pwd),
+        data=message,
+        headers=headers
+    )
+    if response.status_code == 200:
+        log(f'Message pushed successfuly to NTFY. Raw response data: {response.text}')
+    else:
+        log(f'Error: Unable to push NTFY message. Raw response data: {response.text}')
 
 if __name__ == '__main__':
     if key_name == None or key_secret == None:
-        print("Error: Missing coinbase credentials.")
+        log("Error: Missing coinbase credentials.")
     else:
         coinbase_dca()

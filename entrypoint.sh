@@ -2,6 +2,9 @@
 
 rm -f /root/coinbase.lock
 echo "Starting coinbase-dca Docker..."
+echo "Settings used"
+echo "Trading pair: $TRADING_PAIR"
+echo "Order size: $ORDER_SIZE"
 if [ -z "$CRON_EXPRESSION" ]; then
   echo "Crontab Not Present running one time now"
   python main.py
